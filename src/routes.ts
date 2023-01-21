@@ -33,13 +33,11 @@ export async function appRoutes(app: FastifyInstance) {
     const getDayParams = z.object({
       date: z.coerce.date(),
     });
+
     const { date } = getDayParams.parse(request.query);
 
-    const weekDay = dayjs(date).get('day');
-
-    // Retornar:
-    // Todos os hábitos possíveis
-    // hábitos que já foram completados
+    const parsedDate = dayjs(date).startOf('day');
+    const weekDay = parsedDate.get('day');
 
     const possibleHabits = await prisma.habit.findMany({
       where: {
@@ -54,6 +52,81 @@ export async function appRoutes(app: FastifyInstance) {
       },
     });
 
-    return possibleHabits;
+    const day = await prisma.day.findFirst({
+      where: {
+        date: parsedDate.toDate(),
+      },
+      include: {
+        dayHabits: true,
+      },
+    });
+
+    const completedHabits = day?.dayHabits.map((dayHabit) => {
+      return dayHabit.habit_id;
+    });
+
+    return {
+      possibleHabits,
+      completedHabits,
+    };
+  });
+
+  app.patch('/habits/:id/toggle', async (request) => {
+    const toggleHabitParams = z.object({
+      id: z.string().uuid(),
+    });
+
+    const { id } = toggleHabitParams.parse(request.params);
+
+    const today = dayjs().startOf('day').toDate();
+
+    let day = await prisma.day.findUnique({
+      where: {
+        date: today,
+      },
+    });
+
+    if (!day) {
+      day = await prisma.day.create({
+        data: {
+          date: today,
+        },
+      });
+    }
+
+    const dayHabit = await prisma.dayHabit.findUnique({
+      where: {
+        day_id_habit_id: {
+          day_id: day.id,
+          habit_id: id,
+        },
+      },
+    });
+
+    if (dayHabit) {
+      await prisma.dayHabit.delete({
+        where: {
+          id: dayHabit.id,
+        },
+      });
+    } else {
+      await prisma.dayHabit.create({
+        data: {
+          day_id: day.id,
+          habit_id: id,
+        },
+      });
+    }
+  });
+
+  app.get('/summary', async () => {
+    // query mais complexa, mais condições, relaciomentos => SQL na mão (RAW)
+    // Prisma ORM: RAW SQL
+
+    const summary = await prisma.$queryRaw`
+      SELECT * FROM days
+    `;
+
+    return summary;
   });
 }
